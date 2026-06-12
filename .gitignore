@@ -1,0 +1,62 @@
+### Terraform ###
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+*.tfplan
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.d/
+.terragrunt-cache/
+crash.log
+crash.*.log
+.build/
+
+### Python ###
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+.mypy_cache/
+
+### Claude Code ###
+.claude/settings.local.json
+
+### macOS ###
+.DS_Store
+.DS_Store?
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Icon
+*.icloud
+
+### General ###
+*.log
+*.tmp
+*.bak
+*~
+*.swp
+.env
+.env.*
+*.env

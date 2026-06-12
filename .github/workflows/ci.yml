@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test-lambdas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-test.txt
+      - name: Run pytest
+        run: |
+          pytest tests/lambda/ -v
+
+  test-terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+      - name: Terraform Init
+        run: terraform init
+      - name: Terraform Validate
+        run: terraform validate
+      - name: Terraform Test
+        run: terraform test
