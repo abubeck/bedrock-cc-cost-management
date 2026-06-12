@@ -148,7 +148,13 @@ def _daily(now_utc):
             continue
             
         user, model, cache_ttl = m["user"], m["model"], m.get("cache_ttl", "5m")
-        price = PRICE_MAP.get(model, {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write_5m": 0.0, "cache_write_1h": 0.0})
+        price = PRICE_MAP.get(model)
+        if price is None:
+            # Terraform validates price coverage; zero-pricing here would
+            # silently under-report spend, so skip loudly instead.
+            print(f"ERROR: no price for model '{model}' (AIP {aip}); "
+                  f"its usage is EXCLUDED from the daily report")
+            continue
         write_price = price["cache_write_1h"] if cache_ttl == "1h" else price["cache_write_5m"]
         
         invocs = int(d.get("invocations", 0) or 0)

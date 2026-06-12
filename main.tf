@@ -563,10 +563,18 @@ resource "aws_lambda_function" "enforcer" {
       AIP_USER_MAP_JSON = jsonencode({ for k, p in local.user_model_pairs : aws_bedrock_inference_profile.this[k].arn => { user = p.user, model = p.model_key, cache_ttl = p.cache_ttl } })
       METRIC_NAMESPACE  = "ClaudeCode/Quota"
       TOPIC_MAP_JSON    = jsonencode({ for u, t in aws_sns_topic.user_quota : u => t.arn })
+      RESET_HOUR_UTC    = tostring(var.reset_hour_utc)
     }
   }
 
   tags = local.common_tags
+
+  lifecycle {
+    precondition {
+      condition     = alltrue([for k, _ in var.model_catalog : contains(keys(var.price_per_1k_tokens), k)])
+      error_message = "Every model_catalog key needs a matching entry in price_per_1k_tokens — a missing price would be treated as $0 and the daily cap would never trigger for that model."
+    }
+  }
 }
 
 ###############################################################################

@@ -26,6 +26,11 @@ variable "users" {
     condition     = alltrue([for u in var.users : length(u.models) > 0])
     error_message = "Every user must be assigned at least one model."
   }
+
+  validation {
+    condition     = alltrue([for u in var.users : contains(["5m", "1h"], u.cache_ttl)])
+    error_message = "cache_ttl must be \"5m\" or \"1h\" — any other value would silently be billed at the 5m tier."
+  }
 }
 
 variable "model_catalog" {
@@ -35,6 +40,10 @@ variable "model_catalog" {
     inference profile ARN (recommended) or a foundation-model ARN.
     Update the default ARNs to match your region, account ID, and the model
     versions you have enabled in Bedrock.
+    NOTE: only the aliases "haiku", "sonnet" and "opus" (exact names) are
+    wired into the ANTHROPIC_DEFAULT_*_MODEL env vars of the
+    claude_code_env_per_user output; any other alias only reaches users via
+    ANTHROPIC_MODEL when it is the first entry in their models list.
   EOT
   type = map(object({
     source_arn = string
@@ -114,7 +123,7 @@ variable "enforcement_interval_minutes" {
 }
 
 variable "reset_hour_utc" {
-  description = "UTC hour (0-23) at which daily quotas reset."
+  description = "UTC hour (0-23) at which the quota day starts: the reset Lambda untags at this hour and the enforcer counts spend from the most recent occurrence of it."
   type        = number
   default     = 0
 

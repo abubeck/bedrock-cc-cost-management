@@ -57,14 +57,18 @@ def _notify_reset(user: str):
 def handler(event, context):
     reset = []
     for user in MANAGED_USERS:
-        aips = _aips_for_user(user)
-        if not aips:
-            continue
-            
-        if _is_tagged(aips[0]):
-            for aip in aips:
+        # Isolate per-user failures so one bad AIP cannot abort the reset
+        # for everyone else.
+        try:
+            aips = _aips_for_user(user)
+            tagged = [aip for aip in aips if _is_tagged(aip)]
+            if not tagged:
+                continue
+            for aip in tagged:
                 bedrock.untag_resource(resourceARN=aip, tagKeys=["QuotaExceeded"])
             reset.append(user)
             print(f"RESET {user}: untagged AIPs")
             _notify_reset(user)
+        except Exception as e:
+            print(f"WARN reset {user} failed: {e}")
     return {"status": "ok", "reset_users": reset}

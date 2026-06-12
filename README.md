@@ -118,7 +118,8 @@ reporting SNS topic (admin subscribed):
   available immediately with no billing lag — but it's an **estimate** computed
   from token counts × `price_per_1k_tokens`. It matches the numbers users see
   in their quota emails. CSV: `s3://<bucket>/reports/daily/YYYY-MM-DD.csv`,
-  columns `user, model, input_tokens, output_tokens, est_usd`.
+  columns `user, model, invocations, input_tokens, cache_read_tokens,
+  cache_write_tokens, cache_hit_rate_pct, output_tokens, est_usd`.
 - **Monthly** (`report_monthly_day_of_month`, default day 3): covers the
   previous calendar month. Source is **AWS Cost Explorer** grouped by the `User`
   and `ModelTier` cost-allocation tags — these are **actual billed dollars** and

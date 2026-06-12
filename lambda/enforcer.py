@@ -35,6 +35,8 @@ AIP_USER_MAP = json.loads(os.environ["AIP_USER_MAP_JSON"])    # {aip_arn: {user,
 METRIC_NS = os.environ.get("METRIC_NAMESPACE", "ClaudeCode/Quota")
 # {user: sns_topic_arn}. Empty if notifications are disabled.
 TOPIC_MAP = json.loads(os.environ.get("TOPIC_MAP_JSON", "{}"))
+# UTC hour at which the quota day starts; must match the reset schedule.
+RESET_HOUR_UTC = int(os.environ.get("RESET_HOUR_UTC", "0"))
 
 # Logs Insights query: per modelId (== AIP ARN) token totals for the window.
 QUERY = """
@@ -48,9 +50,12 @@ fields modelId,
 """
 
 
-def _start_of_utc_day_epoch() -> int:
+def _start_of_quota_day_epoch() -> int:
+    """Start of the current quota day: the most recent RESET_HOUR_UTC."""
     now = datetime.datetime.now(datetime.timezone.utc)
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = now.replace(hour=RESET_HOUR_UTC, minute=0, second=0, microsecond=0)
+    if start > now:
+        start -= datetime.timedelta(days=1)
     return int(start.timestamp())
 
 
@@ -93,7 +98,14 @@ def _spend_per_user(field_rows):
         user = mapping["user"]
         model = mapping["model"]
         cache_ttl = mapping.get("cache_ttl", "5m")
-        price = PRICE_MAP.get(model, {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write_5m": 0.0, "cache_write_1h": 0.0})
+        price = PRICE_MAP.get(model)
+        if price is None:
+            # Terraform validates price coverage, so this only happens if the
+            # env vars were edited out-of-band. Zero-pricing would silently
+            # disable the cap, so be loud about it.
+            print(f"ERROR: no price for model '{model}' (AIP {aip}); "
+                  f"its usage is NOT counted toward {user}'s cap")
+            continue
         write_price = price["cache_write_1h"] if cache_ttl == "1h" else price["cache_write_5m"]
         in_tok = float(row.get("inputTokens", 0) or 0)
         cache_read_tok = float(row.get("cacheReadTokens", 0) or 0)
@@ -118,25 +130,41 @@ def _is_tagged(aip_arn: str) -> bool:
     return False
 
 def _enforce(user: str, over_cap: bool) -> str:
-    """Apply enforcement and return the transition that occurred:
-    'newly_blocked', 'newly_unblocked', or 'no_change'."""
+    """Bring every AIP of the user to the desired tag state and return the
+    transition that occurred: 'newly_blocked', 'newly_unblocked', or
+    'no_change'. Each AIP is checked and repaired individually so a partial
+    failure on a previous run cannot leave stragglers untagged for the rest
+    of the day; a single tag/untag failure does not abort the others."""
     aips = _aips_for_user(user)
     if not aips:
         return "no_change"
-        
-    # Assume all AIPs for a user share the same state to avoid partial states
-    currently = _is_tagged(aips[0])
-    
-    if over_cap and not currently:
-        for aip in aips:
-            bedrock.tag_resource(resourceARN=aip, tags=[{"key": "QuotaExceeded", "value": "true"}])
-        print(f"BLOCKED {user}: tagged AIPs")
-        return "newly_blocked"
-    elif not over_cap and currently:
-        for aip in aips:
-            bedrock.untag_resource(resourceARN=aip, tagKeys=["QuotaExceeded"])
-        print(f"UNBLOCKED {user}: untagged AIPs")
-        return "newly_unblocked"
+
+    tagged = {aip: _is_tagged(aip) for aip in aips}
+
+    if over_cap:
+        to_tag = [aip for aip, t in tagged.items() if not t]
+        for aip in to_tag:
+            try:
+                bedrock.tag_resource(resourceARN=aip, tags=[{"key": "QuotaExceeded", "value": "true"}])
+            except Exception as e:
+                print(f"WARN tag {aip} failed: {e}")
+        if len(to_tag) == len(aips):
+            print(f"BLOCKED {user}: tagged AIPs")
+            return "newly_blocked"
+        if to_tag:
+            print(f"REPAIRED {user}: tagged {len(to_tag)} straggler AIP(s)")
+    else:
+        to_untag = [aip for aip, t in tagged.items() if t]
+        for aip in to_untag:
+            try:
+                bedrock.untag_resource(resourceARN=aip, tagKeys=["QuotaExceeded"])
+            except Exception as e:
+                print(f"WARN untag {aip} failed: {e}")
+        if len(to_untag) == len(aips):
+            print(f"UNBLOCKED {user}: untagged AIPs")
+            return "newly_unblocked"
+        if to_untag:
+            print(f"REPAIRED {user}: untagged {len(to_untag)} straggler AIP(s)")
     return "no_change"
 
 
@@ -156,7 +184,7 @@ def _notify(user: str, transition: str, used: float, cap: float):
             f"limit of ${cap:.2f} (estimated spend so far today: ${used:.2f}).\n\n"
             f"Bedrock requests will be blocked for the rest of the day and you "
             f"will see 'AccessDenied' errors in Claude Code. Access resets "
-            f"automatically at the start of the next day (UTC).\n\n"
+            f"automatically at {RESET_HOUR_UTC:02d}:00 UTC.\n\n"
             f"If you need a higher limit, contact your administrator.\n"
         )
     else:  # newly_unblocked
@@ -177,7 +205,7 @@ def _notify(user: str, transition: str, used: float, cap: float):
 
 
 def handler(event, context):
-    start = _start_of_utc_day_epoch()
+    start = _start_of_quota_day_epoch()
     end = int(time.time())
 
     results = _run_query(start, end)
