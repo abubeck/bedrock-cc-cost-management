@@ -1,5 +1,9 @@
 mock_provider "aws" {
-  alias = "default"
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
 }
 
 variables {
@@ -11,6 +15,12 @@ variables {
       models        = ["sonnet"]
       notify_email  = "alice@example.com"
       cache_ttl     = "5m"
+    }
+  }
+
+  model_catalog = {
+    sonnet = {
+      source_arn = "arn:aws:bedrock:eu-west-1:111122223333:inference-profile/eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
     }
   }
 }
