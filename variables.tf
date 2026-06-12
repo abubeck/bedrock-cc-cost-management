@@ -11,9 +11,9 @@ variable "users" {
   type = map(object({
     team          = string
     cost_center   = string
-    daily_usd_cap = number           # max USD this user may spend per day
-    models        = list(string)     # keys into var.model_catalog
-    notify_email  = optional(string) # email to notify on block / reset; null disables
+    daily_usd_cap = number                 # max USD this user may spend per day
+    models        = list(string)           # keys into var.model_catalog
+    notify_email  = optional(string)       # email to notify on block / reset; null disables
     cache_ttl     = optional(string, "5m") # configures expected cache behavior: "5m" or "1h"
   }))
 
