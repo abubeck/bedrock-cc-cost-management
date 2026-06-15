@@ -13,22 +13,7 @@ denies. The reset Lambda removes the tag at midnight UTC.
 
 ## Architecture
 
-```
-Claude Code → Application Inference Profile (AIP) → Bedrock foundation model
-                      |
-        Bedrock invocation logging
-                      |
-        CloudWatch Log Group (identity.arn + token counts)
-                      |
-  EventBridge (every 15 min) → Enforcer Lambda
-    - Queries token totals per AIP ARN for today
-    - Converts tokens → USD via price_per_1k_tokens
-    - If spend ≥ cap: tags AIP QuotaExceeded=true  ← block lands here
-    - Publishes DailySpendUSD metric + SNS email on transition
-                      |
-  EventBridge (daily 00:00 UTC) → Reset Lambda
-    - Removes QuotaExceeded tag from all AIPs (clean slate for new day)
-```
+![Architecture diagram](bedrock-cost-management.drawio.png)
 
 ## What it creates
 
