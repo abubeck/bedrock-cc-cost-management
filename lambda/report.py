@@ -138,15 +138,19 @@ def _daily(now_utc):
                 has_1h_models.add(d.get("modelId", ""))
 
     agg = {}
-    admin_rows = []
-    
+    # user_cache accumulates token totals per user so the Admin Cache Overview
+    # can emit one row per user — matching how Claude Code applies the TTL setting
+    # (globally, not per model). cache_ttl is per-user in var.users; if AIPs for
+    # the same user somehow diverge, max() surfaces the discrepancy.
+    user_cache = {}
+
     for row in res.get("results", []):
         d = {f["field"]: f["value"] for f in row}
         aip = d.get("modelId", "")
         m = AIP_USER_MAP.get(aip)
         if not m:
             continue
-            
+
         user, model, cache_ttl = m["user"], m["model"], m.get("cache_ttl", "5m")
         price = PRICE_MAP.get(model)
         if price is None:
@@ -156,7 +160,7 @@ def _daily(now_utc):
                   f"its usage is EXCLUDED from the daily report")
             continue
         write_price = price["cache_write_1h"] if cache_ttl == "1h" else price["cache_write_5m"]
-        
+
         invocs = int(d.get("invocations", 0) or 0)
         in_tok = float(d.get("inputTokens", 0) or 0)
         cache_read_tok = float(d.get("cacheReadTokens", 0) or 0)
@@ -166,23 +170,53 @@ def _daily(now_utc):
                (cache_read_tok / 1000.0) * price["cache_read"] +
                (cache_write_tok / 1000.0) * write_price +
                (out_tok / 1000.0) * price["output"])
-               
+
+        uc = user_cache.get(user)
+        if uc is None:
+            user_cache[user] = {
+                "cache_ttl": cache_ttl,
+                "in_tok": in_tok,
+                "cache_read_tok": cache_read_tok,
+                "cache_write_tok": cache_write_tok,
+                "has_1h": aip in has_1h_models,
+            }
+        else:
+            uc["cache_ttl"] = max(uc["cache_ttl"], cache_ttl)
+            uc["in_tok"] += in_tok
+            uc["cache_read_tok"] += cache_read_tok
+            uc["cache_write_tok"] += cache_write_tok
+            uc["has_1h"] = uc["has_1h"] or (aip in has_1h_models)
+
+        k = (user, model)
+        cur = agg.get(k, [0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        hit_rate_pct = 0.0
+        total_in = in_tok + cache_read_tok + cache_write_tok
+        if total_in > 0:
+            hit_rate_pct = round((cache_read_tok / total_in) * 100, 1)
+        agg[k] = [cur[0] + invocs, cur[1] + in_tok, cur[2] + cache_read_tok, cur[3] + cache_write_tok, hit_rate_pct, cur[5] + out_tok, cur[6] + usd]
+
+    admin_rows = []
+    for user, uc in sorted(user_cache.items()):
+        cache_ttl = uc["cache_ttl"]
+        cache_read_tok = uc["cache_read_tok"]
+        cache_write_tok = uc["cache_write_tok"]
+        in_tok = uc["in_tok"]
         total_in = in_tok + cache_read_tok + cache_write_tok
         hit_rate = (cache_read_tok / total_in) if total_in > 0 else 0.0
         hit_rate_pct = round(hit_rate * 100, 1)
-        
+
         actual_usage = "5m"
         if cache_read_tok == 0 and cache_write_tok == 0:
             actual_usage = "Disabled or <1k tokens"
-        elif aip in has_1h_models:
+        elif uc["has_1h"]:
             actual_usage = "1h"
-            
+
         suggested = "5m"
         if hit_rate < 0.22:
             suggested = "Disabled"
         elif hit_rate > 0.50:
             suggested = "5m or 1h"
-            
+
         notes = ""
         if cache_ttl != actual_usage and actual_usage != "Disabled or <1k tokens":
             notes = f"Mismatch! Paying {cache_ttl} tier but using {actual_usage} locally."
@@ -190,12 +224,8 @@ def _daily(now_utc):
             notes = f"Paying {cache_ttl} tier but caching disabled."
         elif hit_rate < 0.22 and actual_usage != "Disabled or <1k tokens":
             notes = f"Losing money on caching. (Hit Rate: {hit_rate_pct}%)"
-            
+
         admin_rows.append([user, cache_ttl, actual_usage, suggested, notes])
-        
-        k = (user, model)
-        cur = agg.get(k, [0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        agg[k] = [cur[0] + invocs, cur[1] + in_tok, cur[2] + cache_read_tok, cur[3] + cache_write_tok, hit_rate_pct, cur[5] + out_tok, cur[6] + usd]
 
     rows = [
         [u, m, int(v[0]), int(v[1]), int(v[2]), int(v[3]), v[4], int(v[5]), round(v[6], 4)]
@@ -210,8 +240,6 @@ def _daily(now_utc):
         totals[u] = round(totals.get(u, 0.0) + v[6], 4)
     total_rows = [[u, f"${c:.4f}"] for u, c in sorted(totals.items())]
     grand = sum(totals.values())
-    
-    admin_rows.sort()
 
     body = (
         f"Claude Code on Bedrock - DAILY report for {yesterday} (UTC)\n"
